@@ -62,20 +62,16 @@ function settings() {
     if(axis==='x' && polarization==='Linear X') throw Error('Beam 2: choose a transverse polarization');
     return {wavelength,waist,p,l,axis,polarization,direction:i===2 && axis==='z' ? -1 : 1,focus:0};
   });
-  const gamma=number('gamma'), phase=number('phase')*PI/180, viewX=number('viewX'), viewZ=number('viewZ');
-  if(gamma<=0 || viewX<=0 || viewZ<=0) throw Error('Contrast and view half-widths must be positive');
-  return {beams,gamma,phase,viewX,viewZ,intensity:$('quantity').value==='intensity',component:'XYZ'.indexOf($('component').value)};
+  const phase=number('phase')*PI/180, viewX=number('viewX'), viewZ=number('viewZ');
+  if(viewX<=0 || viewZ<=0) throw Error('View half-widths must be positive');
+  return {beams,phase,viewX,viewZ,colormap:$('colormap').value,intensity:$('quantity').value==='intensity',component:'XYZ'.indexOf($('component').value)};
 }
-function palette(t,intensity) {
-  t=Math.max(0,Math.min(1,t));
-  const stops=intensity ? [[0,[32,11,78]],[.25,[63,74,157]],[.5,[31,153,136]],[.75,[174,210,68]],[1,[253,231,37]]] : [[0,[5,48,97]],[.25,[69,139,195]],[.5,[247,247,247]],[.75,[218,112,101]],[1,[103,0,31]]];
-  for(let i=1;i<stops.length;i++) if(t<=stops[i][0]) {
-    const f=(t-stops[i-1][0])/(stops[i][0]-stops[i-1][0]);
-    return stops[i][1].map((v,c)=>Math.round(stops[i-1][1][c]*(1-f)+v*f));
-  }
-  return stops.at(-1)[1];
+function palette(t,name) {
+  const samples=colormapSamples[name] || colormapSamples.viridis;
+  const index=Math.min(255,Math.max(0,Math.floor(t*256)))*6;
+  return [0,2,4].map(offset=>parseInt(samples.slice(index+offset,index+offset+2),16));
 }
-function paint(canvas, values, width,height,scale,gamma,intensity,phase=false) {
+function paint(canvas, values, width,height,scale,colormap,intensity,phase=false) {
   canvas.width=width; canvas.height=height;
   const ctx=canvas.getContext('2d'), img=ctx.createImageData(width,height);
   for(let i=0;i<values.length;i++) {
@@ -85,8 +81,8 @@ function paint(canvas, values, width,height,scale,gamma,intensity,phase=false) {
       if(value===null) rgb=[242,245,248];
       else { const angle=(value+PI)/(2*PI); rgb=hsl((angle*360+240)%360,70,50); }
     } else {
-      const n=Math.min(1,Math.abs(value)/scale)**gamma;
-      rgb=palette(intensity?n:(1+Math.sign(value)*n)/2,intensity);
+      const n=Math.min(1,Math.abs(value)/scale);
+      rgb=palette(intensity?n:(1+Math.sign(value)*n)/2,colormap);
     }
     const idx=4*i; img.data[idx]=rgb[0]; img.data[idx+1]=rgb[1]; img.data[idx+2]=rgb[2]; img.data[idx+3]=255;
   }
@@ -108,9 +104,32 @@ function rowData(config,width,height,xy) {
   }
   return {arrays,scale:scale||1};
 }
-function draw() {
+function drawAxes(canvas,image,config,xy) {
+  const left=55, top=13, right=16, bottom=52, width=image.width, height=image.height;
+  canvas.width=left+width+right;canvas.height=top+height+bottom;
+  const ctx=canvas.getContext('2d');ctx.fillStyle='white';ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.drawImage(image,left,top);
+  if(!xy) {ctx.strokeStyle='rgba(255,255,255,.75)';ctx.beginPath();ctx.moveTo(left,top+height/2);ctx.lineTo(left+width,top+height/2);ctx.stroke();}
+  const maxY=xy?config.viewX:config.viewZ;
+  const format=n=>Number(n.toFixed(2)).toString();
+  function ticks(max,size,origin,vertical) {
+    const step=Math.pow(10,Math.floor(Math.log10(max)));
+    const interval=[1,2,5,10].map(n=>n*step).find(n=>max/n<=3) || 10*step;
+    for(let v=-Math.floor(max/interval)*interval;v<=max+interval*1e-8;v+=interval) {
+      const pos=origin+size*(v/max+1)/2;
+      ctx.beginPath();
+      if(vertical){const y=origin+size*(1-v/max)/2;ctx.moveTo(left-5,y);ctx.lineTo(left,y);ctx.stroke();ctx.textAlign='right';ctx.fillText(format(v),left-8,y+4);}
+      else {ctx.moveTo(pos,top+height);ctx.lineTo(pos,top+height+5);ctx.stroke();ctx.textAlign='center';ctx.fillText(format(v),pos,top+height+19);}
+    }
+  }
+  ctx.strokeStyle='#263953';ctx.fillStyle='#263953';ctx.lineWidth=1;ctx.font='13px sans-serif';
+  ctx.strokeRect(left+.5,top+.5,width,height);
+  ticks(config.viewX,width,left,false);ticks(maxY,height,top,true);
+  ctx.textAlign='center';ctx.fillText('x / ?',left+width/2,canvas.height-9);
+  ctx.save();ctx.translate(16,top+height/2);ctx.rotate(-Math.PI/2);ctx.fillText(xy?'y / ?':'z / ?',0,0);ctx.restore();
+}function draw() {
   try {
-    const config=settings(); $('error').textContent='';
+    const config=settings(); if(config.colormap==='auto') config.colormap=config.intensity?'viridis':'RdBu_r'; $('error').textContent='';
     const plots=$('plots'); plots.replaceChildren();
     for(const xy of [false,true]) {
       const width=xy?240:320,height=xy?240:600;
@@ -118,16 +137,16 @@ function draw() {
       for(let c=0;c<3;c++) {
         const box=document.createElement('div'), title=document.createElement('strong'), canvas=document.createElement('canvas'), caption=document.createElement('small');
         box.className='plot'; title.textContent=(c===0?'Beam 1 (+z)':c===1?`Beam 2 (${config.beams[1].axis==="x"?'+x':'−z'})`:'Combined')+(xy?' : x–y at z / λ = 0':' : x–z');
-        paint(canvas,arrays[c],width,height,scale,config.gamma,config.intensity);
-        if(!xy) { const ctx=canvas.getContext('2d');ctx.strokeStyle='rgba(255,255,255,.75)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(0,height/2);ctx.lineTo(width,height/2);ctx.stroke(); }
-        caption.textContent=xy?`x / λ: −${config.viewX} … ${config.viewX}; y / λ: −${config.viewX} … ${config.viewX}`:`x / λ: −${config.viewX} … ${config.viewX}; z / λ: −${config.viewZ} … ${config.viewZ}`;
-        box.append(title,canvas,caption);plots.append(box);
+        const image=document.createElement('canvas');
+        paint(image,arrays[c],width,height,scale,config.colormap,config.intensity);
+        drawAxes(canvas,image,config,xy);
+        box.append(title,canvas);plots.append(box);
       }
     }
-    $('scaleLabel').textContent=(config.intensity?'Intensity / displayed maximum':`Re(E${$('component').value}) at t=0 / max |E${$('component').value}|`)+` · display contrast γ=${config.gamma}`;
+    $('scaleLabel').textContent=(config.intensity?'Intensity / displayed maximum':`Re(E${$('component').value}) at t=0 / max |E${$('component').value}|`)+` · ${config.colormap}`;
     $('low').textContent=config.intensity?'0':'−1';$('high').textContent='1';
     const bar=$('colorbar'), ctx=bar.getContext('2d');
-    for(let i=0;i<bar.width;i++){ctx.fillStyle=`rgb(${palette(i/(bar.width-1),config.intensity).join(',')})`;ctx.fillRect(i,0,1,bar.height);}
+    for(let i=0;i<bar.width;i++){ctx.fillStyle=`rgb(${palette(i/(bar.width-1),config.colormap).join(',')})`;ctx.fillRect(i,0,1,bar.height);}
     $('beamArrows').textContent=`🔵 1: +z ↑ · 🔴 2: ${config.beams[1].axis==='x'?'+x →':'−z ↓'}`;
   } catch(error) { $('error').textContent=error.message; }
 }
@@ -146,7 +165,7 @@ function gallery() {
       max=Math.max(max,m);
     }
     const data=phase?values.map(v=>v.m<.03*max?null:v.angle):values;
-    paint(canvas,data,size,size,phase?1:max*max,1,true,phase);
+    paint(canvas,data,size,size,phase?1:max*max,'inferno',true,phase);
     tile.append(title,canvas); tile.addEventListener('click',()=>{$('galleryDetails').textContent=`LG(${p},${l}): ${p} radial node(s), charge ±${l}, M² = ${2*p+l+1}; negative charge reverses phase winding.`;});
     tiles.append(tile);
   }
@@ -171,11 +190,14 @@ $('galleryQuantity').addEventListener('change',gallery);
 for(const [tab,show,hide] of [['viewerTab','viewer','gallery'],['galleryTab','gallery','viewer']]) $(tab).addEventListener('click',()=>{$(show).hidden=false;$(hide).hidden=true;$(tab).classList.add('active');$(show==='viewer'?'galleryTab':'viewerTab').classList.remove('active');});
 $('save').addEventListener('click',()=>{
   if(!$('plots').children.length) return;
-  const source=[...$('plots').querySelectorAll('canvas')], width=960,height=1250, exportCanvas=document.createElement('canvas');
+  const source=[...$('plots').querySelectorAll('canvas')], width=1200,height=1420, exportCanvas=document.createElement('canvas');
   exportCanvas.width=width;exportCanvas.height=height;
   const ctx=exportCanvas.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,width,height);ctx.fillStyle='#17243b';ctx.font='bold 24px sans-serif';ctx.fillText('Laguerre–Gaussian beam viewer',20,34);
   ctx.font='16px sans-serif';ctx.fillText($('scaleLabel').textContent,20,62);
-  source.forEach((canvas,i)=>{const col=i%3,row=Math.floor(i/3),x=20+col*315,y=row?850:90,w=300,h=row?300:720;ctx.drawImage(canvas,x,y,w,h);ctx.fillStyle='#17243b';ctx.font='14px sans-serif';ctx.fillText($('plots').children[i].querySelector('strong').textContent,x,y-5);});
+  source.forEach((canvas,i)=>{const col=i%3,row=Math.floor(i/3),x=20+col*390,y=row?890:90,w=375,h=row?450:770;ctx.drawImage(canvas,x,y,w,h);ctx.fillStyle='#17243b';ctx.font='14px sans-serif';ctx.fillText($('plots').children[i].querySelector('strong').textContent,x,y-5);});
+  ctx.fillStyle='#17243b';ctx.font='16px sans-serif';ctx.fillText($('low').textContent,360,1390);ctx.drawImage($('colorbar'),390,1372,410,20);ctx.fillText($('high').textContent,810,1390);
   const link=document.createElement('a');link.download='laguerre-gaussian-beams.png';link.href=exportCanvas.toDataURL('image/png');link.click();
 });
 updateOptics();draw();gallery();
+
+
