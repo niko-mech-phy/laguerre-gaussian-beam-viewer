@@ -105,10 +105,11 @@ function rowData(config,width,height,xy) {
   return {arrays,scale:scale||1};
 }
 function drawAxes(canvas,image,config,xy) {
-  const left=55, top=13, right=16, bottom=52, width=image.width, height=image.height;
+  const left=55, top=13, right=16, bottom=52, width=image.width;
+  const height=xy ? width : Math.max(1,Math.round(width*config.viewZ/config.viewX));
   canvas.width=left+width+right;canvas.height=top+height+bottom;
   const ctx=canvas.getContext('2d');ctx.fillStyle='white';ctx.fillRect(0,0,canvas.width,canvas.height);
-  ctx.drawImage(image,left,top);
+  ctx.drawImage(image,left,top,width,height);
   if(!xy) {ctx.strokeStyle='rgba(255,255,255,.75)';ctx.beginPath();ctx.moveTo(left,top+height/2);ctx.lineTo(left+width,top+height/2);ctx.stroke();}
   const maxY=xy?config.viewX:config.viewZ;
   const format=n=>Number(n.toFixed(2)).toString();
@@ -125,8 +126,8 @@ function drawAxes(canvas,image,config,xy) {
   ctx.strokeStyle='#263953';ctx.fillStyle='#263953';ctx.lineWidth=1;ctx.font='13px sans-serif';
   ctx.strokeRect(left+.5,top+.5,width,height);
   ticks(config.viewX,width,left,false);ticks(maxY,height,top,true);
-  ctx.textAlign='center';ctx.fillText('x / ?',left+width/2,canvas.height-9);
-  ctx.save();ctx.translate(16,top+height/2);ctx.rotate(-Math.PI/2);ctx.fillText(xy?'y / ?':'z / ?',0,0);ctx.restore();
+  ctx.textAlign='center';ctx.fillText('x / λ',left+width/2,canvas.height-9);
+  ctx.save();ctx.translate(16,top+height/2);ctx.rotate(-Math.PI/2);ctx.fillText(xy?'y / λ':'z / λ',0,0);ctx.restore();
 }function draw() {
   try {
     const config=settings(); if(config.colormap==='auto') config.colormap=config.intensity?'viridis':'RdBu_r'; $('error').textContent='';
@@ -194,7 +195,12 @@ $('save').addEventListener('click',()=>{
   exportCanvas.width=width;exportCanvas.height=height;
   const ctx=exportCanvas.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,width,height);ctx.fillStyle='#17243b';ctx.font='bold 24px sans-serif';ctx.fillText('Laguerre–Gaussian beam viewer',20,34);
   ctx.font='16px sans-serif';ctx.fillText($('scaleLabel').textContent,20,62);
-  source.forEach((canvas,i)=>{const col=i%3,row=Math.floor(i/3),x=20+col*390,y=row?890:90,w=375,h=row?450:770;ctx.drawImage(canvas,x,y,w,h);ctx.fillStyle='#17243b';ctx.font='14px sans-serif';ctx.fillText($('plots').children[i].querySelector('strong').textContent,x,y-5);});
+  source.forEach((canvas,i)=>{
+    const col=i%3,row=Math.floor(i/3),x=20+col*390,y=row?890:90,w=375,h=row?450:770;
+    const factor=Math.min(w/canvas.width,h/canvas.height),drawW=canvas.width*factor,drawH=canvas.height*factor;
+    ctx.drawImage(canvas,x+(w-drawW)/2,y,drawW,drawH);
+    ctx.fillStyle='#17243b';ctx.font='14px sans-serif';ctx.fillText($('plots').children[i].querySelector('strong').textContent,x,y-5);
+  });
   ctx.fillStyle='#17243b';ctx.font='16px sans-serif';ctx.fillText($('low').textContent,360,1390);ctx.drawImage($('colorbar'),390,1372,410,20);ctx.fillText($('high').textContent,810,1390);
   const link=document.createElement('a');link.download='laguerre-gaussian-beams.png';link.href=exportCanvas.toDataURL('image/png');link.click();
 });
